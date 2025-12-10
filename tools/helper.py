@@ -11,8 +11,9 @@ import numpy as np
 from utils.misc import segment_iou, cal_tiou, seg_pool_1d, seg_pool_3d
 
 
-def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pred_scores,
-                          video_1, label_1_score, video_2, label_2_score, mse, optimizer, opti_flag,
+
+def network_forward_train(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, pred_scores,
+                          video_1, video_gray_1, label_1_score, video_2, video_gray_2, label_2_score, mse, optimizer, opti_flag,
                           epoch, batch_idx, batch_num, args, label_1_tas, label_2_tas, bce,
                           pred_tious_5, pred_tious_75):
 
@@ -26,11 +27,19 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
     video_1_feamap = com_feamap_12[:,:,:com_feature_12.shape[2] // 2]
     video_2_feamap = com_feamap_12[:,:,com_feature_12.shape[2] // 2:]
 
-    N,T,C,T_t,H_t,W_t = video_1_feamap.size()
+    N,T,C,T_t,H_t,W_t = video_1_feamap.size() # N is batch number C is channel T
     video_1_feamap = video_1_feamap.mean(-3)
     video_2_feamap = video_2_feamap.mean(-3)
     video_1_feamap_re = video_1_feamap.reshape(-1, T, C)
     video_2_feamap_re = video_2_feamap.reshape(-1, T, C)
+
+
+    #############wavelet feautre############
+    video_1_wvlet = base_wvlet_model(video_gray_1)
+    video_2_wvlet = base_wvlet_model(video_gray_2)
+
+
+    
 
     ############# Procedure Segmentation #############
     com_feature_12_u = torch.cat((video_1_fea, video_2_fea), 0)
@@ -39,6 +48,8 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
     u_fea_96, transits_pred = psnet_model(com_feature_12_u)
     u_feamap_96, transits_pred_map = psnet_model(com_feamap_12_u)
     u_feamap_96 = u_feamap_96.reshape(2*N, u_feamap_96.shape[1], u_feamap_96.shape[2], H_t, W_t)
+
+
 
     label_12_tas = torch.cat((label_1_tas, label_2_tas), 0)
     label_12_pad = torch.zeros(transits_pred.size())
@@ -68,8 +79,8 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
         for bs_1 in range(u_fea_96_1.shape[0]):
             video_1_st = int(label_1_tas[bs_1][0].item())
             video_1_ed = int(label_1_tas[bs_1][1].item())
-            video_1_segs.append(seg_pool_1d(u_fea_96_1[bs_1].unsqueeze(0), video_1_st, video_1_ed, args.fix_size))
-        video_1_segs = torch.cat(video_1_segs, 0).transpose(1, 2)
+            video_1_segs.append(seg_pool_1d(u_fea_96_1[bs_1].unsqueeze(0), video_1_st, video_1_ed, args.fix_size)) # 为了将视频片段转化成固定大小的长度，因为分割点的不同，会导致在不同的帧上进行分割，从而无法实现三段视频大小的一致性。
+        video_1_segs = torch.cat(video_1_segs, 0).transpose(1, 2) # dim 1 and dim 2 互换
 
         video_2_segs = []
         for bs_2 in range(u_fea_96_2.shape[0]):                 
@@ -82,7 +93,7 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
         for bs_1 in range(u_feamap_96_1.shape[0]):
             video_1_st = int(label_1_tas[bs_1][0].item())
             video_1_ed = int(label_1_tas[bs_1][1].item())
-            video_1_segs_map.append(seg_pool_3d(u_feamap_96_1[bs_1].unsqueeze(0), video_1_st, video_1_ed, args.fix_size))
+            video_1_segs_map.append(seg_pool_3d(u_feamap_96_1[bs_1].unsqueeze(0), video_1_st, video_1_ed, args.fix_size))# 为了将视频片段转化成固定大小的长度，因为分割点的不同，会导致在不同的帧上进行分割，从而无法实现三段视频大小的一致性。
         video_1_segs_map = torch.cat(video_1_segs_map, 0)
         video_1_segs_map = video_1_segs_map.reshape(video_1_segs_map.shape[0], video_1_segs_map.shape[1], video_1_segs_map.shape[2], -1).transpose(2, 3)
         video_1_segs_map = torch.cat([video_1_segs_map[:,:,:,i] for i in range(video_1_segs_map.shape[-1])], 2).transpose(1, 2)
@@ -143,14 +154,32 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
         video_2_segs_map = torch.cat(video_2_segs_map, 0)
         video_2_segs_map = video_2_segs_map.reshape(video_2_segs_map.shape[0], video_2_segs_map.shape[1], video_2_segs_map.shape[2], -1).transpose(2, 3)
         video_2_segs_map = torch.cat([video_2_segs_map[:, :, :, i] for i in range(video_2_segs_map.shape[-1])], 2).transpose(1, 2)
+    #################################time requency fusion with crossattention############################################
+
+    video_1_fusion = tqfusion_model(video_1_wvlet,  video_1_segs_map) # 将频域与分割后的时域进行融合
+    video_2_fusion = tqfusion_model(video_2_wvlet, video_2_segs_map) # 将频域与分割后的时域进行融合
+    # video_1_fusion = tqfusion_model(video_1_wvlet, video_1_feamap_re) # 将频域与为分割的时域进行融合
+    # video_1_fusion = tqfusion_model(video_2_wvlet, video_2_feamap_re) # 将频域与为分割的时域进行融合
+
+
 
     decoder_video_12_map_list = []
     decoder_video_21_map_list = []
+    ###############################使用分割后的时域特征进行解码：原始的方法############################################
+    # for i in range(args.step_num):
+    #     decoder_video_12_map = decoder(video_1_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
+    #                                                   video_2_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])     # N,15,256/64
+    #     decoder_video_21_map = decoder(video_2_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
+    #                                       video_1_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])    # N,15,256/64
+    #     decoder_video_12_map_list.append(decoder_video_12_map)
+    #     decoder_video_21_map_list.append(decoder_video_21_map)
+    ##############################默认分割成3部分，然后进行解码：新的方法############################################
     for i in range(args.step_num):
-        decoder_video_12_map = decoder(video_1_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
-                                                      video_2_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])     # N,15,256/64
-        decoder_video_21_map = decoder(video_2_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
-                                          video_1_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])    # N,15,256/64
+        step_size = int(video_1_fusion.size(1) / args.step_num)
+        decoder_video_12_map = decoder(video_1_fusion[:, i*step_size:(i+1)*step_size,:],
+                                                      video_2_fusion[:, i*step_size*H_t*W_t:(i+1)*step_size*H_t*W_t,:])     # N,15,256/64
+        decoder_video_21_map = decoder(video_2_fusion[:, i*step_size:(i+1)*step_size,:],
+                                          video_1_fusion[:, i*step_size*H_t*W_t:(i+1)*step_size*H_t*W_t,:])    # N,15,256/64
         decoder_video_12_map_list.append(decoder_video_12_map)
         decoder_video_21_map_list.append(decoder_video_21_map)
 
@@ -165,6 +194,7 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
                + mse(delta[delta.shape[0]//2:], (label_2_score - label_1_score))
 
     loss = loss_aqa + loss_tas
+    # loss = loss_aqa
     loss.backward()
     optimizer.step()
 
@@ -194,13 +224,13 @@ def network_forward_train(base_model, psnet_model, decoder, regressor_delta, pre
                  optimizer.param_groups[0]['lr'], optimizer.param_groups[1]['lr']))
 
 
-def network_forward_test(base_model, psnet_model, decoder, regressor_delta, pred_scores,
-                         video_1, video_2_list, label_2_score_list,
+def network_forward_test(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, pred_scores,
+                         video_1, video_gray_1, video_2_list, video_gray_2_list, label_2_score_list,
                          args, label_1_tas, label_2_tas_list,
                          pred_tious_test_5, pred_tious_test_75):
     score = 0
     tIoU_results = []
-    for video_2, label_2_score, label_2_tas in zip(video_2_list, label_2_score_list, label_2_tas_list):
+    for video_2, video_gray_2, label_2_score, label_2_tas in zip(video_2_list, video_gray_2_list, label_2_score_list, label_2_tas_list):
 
         ############# I3D featrue #############
         com_feature_12, com_feamap_12 = base_model(video_1, video_2) 
@@ -214,6 +244,10 @@ def network_forward_test(base_model, psnet_model, decoder, regressor_delta, pred
         video_2_feamap = video_2_feamap.mean(-3)
         video_1_feamap_re = video_1_feamap.reshape(-1, T, C)
         video_2_feamap_re = video_2_feamap.reshape(-1, T, C)
+
+        #############wavelet feautre############
+        video_1_wvlet = base_wvlet_model(video_gray_1)
+        video_2_wvlet = base_wvlet_model(video_gray_2)
 
         ############# Procedure Segmentation #############
         com_feature_12_u = torch.cat((video_1_fea, video_2_fea), 0)
@@ -286,16 +320,40 @@ def network_forward_test(base_model, psnet_model, decoder, regressor_delta, pred
         video_2_segs_map = video_2_segs_map.reshape(video_2_segs_map.shape[0], video_2_segs_map.shape[1], video_2_segs_map.shape[2], -1).transpose(2, 3)
         video_2_segs_map = torch.cat([video_2_segs_map[:, :, :, i] for i in range(video_2_segs_map.shape[-1])], 2).transpose(1, 2)
 
+        #################################time requency fusion with crossattention############################################
+
+        video_1_fusion = tqfusion_model(video_1_wvlet, video_1_segs_map)  # 将频域与分割后的时域进行融合
+        video_2_fusion = tqfusion_model(video_2_wvlet, video_2_segs_map)  # 将频域与分割后的时域进行融合
+        # video_1_fusion = tqfusion_model(video_1_wvlet, video_1_feamap_re) # 将频域与为分割的时域进行融合
+        # video_1_fusion = tqfusion_model(video_2_wvlet, video_2_feamap_re) # 将频域与为分割的时域进行融合
+
         decoder_video_12_map_list = []
         decoder_video_21_map_list = []
+        # for i in range(args.step_num):
+        #     decoder_video_12_map = decoder(video_1_segs[:, i * args.fix_size:(i + 1) * args.fix_size, :],
+        #                                              video_2_segs_map[:,
+        #                                              i * args.fix_size * H_t * W_t:(i + 1) * args.fix_size * H_t * W_t,
+        #                                              :])
+        #     decoder_video_21_map = decoder(video_2_segs[:, i * args.fix_size:(i + 1) * args.fix_size, :],
+        #                                       video_1_segs_map[:, i * args.fix_size * H_t * W_t:(i + 1) * args.fix_size * H_t * W_t,
+        #                                       :])
+        ###############################使用分割后的时域特征进行解码：原始的方法############################################
+        # for i in range(args.step_num):
+        #     decoder_video_12_map = decoder(video_1_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
+        #                                                   video_2_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])     # N,15,256/64
+        #     decoder_video_21_map = decoder(video_2_segs[:, i*args.fix_size:(i+1)*args.fix_size,:],
+        #                                       video_1_segs_map[:, i*args.fix_size*H_t*W_t:(i+1)*args.fix_size*H_t*W_t,:])    # N,15,256/64
+        #     decoder_video_12_map_list.append(decoder_video_12_map)
+        #     decoder_video_21_map_list.append(decoder_video_21_map)
+        ##############################默认分割成3部分，然后进行解码：新的方法############################################
         for i in range(args.step_num):
-            decoder_video_12_map = decoder(video_1_segs[:, i * args.fix_size:(i + 1) * args.fix_size, :],
-                                                     video_2_segs_map[:,
-                                                     i * args.fix_size * H_t * W_t:(i + 1) * args.fix_size * H_t * W_t,
-                                                     :])
-            decoder_video_21_map = decoder(video_2_segs[:, i * args.fix_size:(i + 1) * args.fix_size, :],
-                                              video_1_segs_map[:, i * args.fix_size * H_t * W_t:(i + 1) * args.fix_size * H_t * W_t,
-                                              :])
+            step_size = int(video_1_fusion.size(1) / args.step_num)
+            decoder_video_12_map = decoder(video_1_fusion[:, i * step_size:(i + 1) * step_size, :],
+                                           video_2_fusion[:, i * step_size * H_t * W_t:(i + 1) * step_size * H_t * W_t,
+                                           :])  # N,15,256/64
+            decoder_video_21_map = decoder(video_2_fusion[:, i * step_size:(i + 1) * step_size, :],
+                                           video_1_fusion[:, i * step_size * H_t * W_t:(i + 1) * step_size * H_t * W_t,
+                                           :])  # N,15,256/64
             decoder_video_12_map_list.append(decoder_video_12_map)
             decoder_video_21_map_list.append(decoder_video_21_map)
 
@@ -321,11 +379,13 @@ def network_forward_test(base_model, psnet_model, decoder, regressor_delta, pred
     pred_tious_test_75.extend([tIoU_correct_per_thr[1]])
 
 
-def save_checkpoint(base_model, psnet_model, decoder, regressor_delta, optimizer, epoch,
+def save_checkpoint(base_model, psnet_model,base_wvlet_model, tqfusion_model, decoder, regressor_delta, optimizer, epoch,
                     epoch_best_aqa, rho_best, L2_min, RL2_min, prefix, args):
     torch.save({
         'base_model': base_model.state_dict(),
         'psnet_model': psnet_model.state_dict(),
+        'base_wvlet_model': base_wvlet_model.state_dict(),
+        'tqfusion_model': tqfusion_model.state_dict(),
         'decoder': decoder.state_dict(),
         'regressor_delta': regressor_delta.state_dict(),
         'optimizer': optimizer.state_dict(),

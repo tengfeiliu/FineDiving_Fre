@@ -20,7 +20,7 @@ def train_net(args):
                                                   pin_memory=True)
 
     # build model
-    base_model, psnet_model, decoder, regressor_delta = builder.model_builder(args)
+    base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta = builder.model_builder(args)
 
     # CUDA
     global use_gpu
@@ -28,11 +28,13 @@ def train_net(args):
     if use_gpu:
         base_model = base_model.cuda()
         psnet_model = psnet_model.cuda()
+        base_wvlet_model = base_wvlet_model.cuda()
+        tqfusion_model = tqfusion_model.cuda()
         decoder = decoder.cuda()
         regressor_delta = regressor_delta.cuda()
         torch.backends.cudnn.benchmark = True
 
-    optimizer, scheduler = builder.build_opti_sche(base_model, psnet_model, decoder, regressor_delta, args)
+    optimizer, scheduler = builder.build_opti_sche(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, args)
 
     start_epoch = 0
     global epoch_best_tas, pred_tious_best_5, pred_tious_best_75, epoch_best_aqa, rho_best, L2_min, RL2_min
@@ -46,16 +48,18 @@ def train_net(args):
 
     # resume ckpts
     if args.resume:
-        start_epoch, epoch_best_aqa, rho_best, L2_min, RL2_min = builder.resume_train(base_model, psnet_model, decoder,
+        start_epoch, epoch_best_aqa, rho_best, L2_min, RL2_min = builder.resume_train(base_model, psnet_model, base_wvlet_model, tqfusion_model,  decoder,
                                                                                       regressor_delta, optimizer, args)
         print('resume ckpts @ %d epoch(rho = %.4f, L2 = %.4f , RL2 = %.4f)'
               % (start_epoch - 1, rho_best, L2_min, RL2_min))
 
     # DP
-    base_model = nn.DataParallel(base_model)
-    psnet_model = nn.DataParallel(psnet_model)
-    decoder = nn.DataParallel(decoder)
-    regressor_delta = nn.DataParallel(regressor_delta)
+    # base_model = nn.DataParallel(base_model)
+    # psnet_model = nn.DataParallel(psnet_model)
+    # base_wvlet_model = nn.DataParallel(base_wvlet_model)
+    # tqfusion_model = nn.DataParallel(tqfusion_model)
+    # decoder = nn.DataParallel(decoder)
+    # regressor_delta = nn.DataParallel(regressor_delta)
 
     # loss
     mse = nn.MSELoss().cuda()
@@ -70,6 +74,8 @@ def train_net(args):
 
         base_model.train()  
         psnet_model.train()
+        base_wvlet_model.train()
+        tqfusion_model.train()
         decoder.train()
         regressor_delta.train()
 
@@ -77,11 +83,15 @@ def train_net(args):
             base_model.apply(misc.fix_bn)
         for idx, (data, target) in enumerate(train_dataloader):
             # num_iter += 1
+            # if idx == 0:
+
             opti_flag = True
 
             # video_1 is query and video_2 is exemplar
             video_1 = data['video'].float().cuda()
+            video_gray_1 = data['video_gray'].float().cuda()
             video_2 = target['video'].float().cuda()
+            video_gray_2 = target['video_gray'].float().cuda()
             label_1_tas = data['transits'].float().cuda() + 1
             label_2_tas = target['transits'].float().cuda() + 1
             label_1_score = data['final_score'].float().reshape(-1, 1).cuda()
@@ -89,12 +99,13 @@ def train_net(args):
 
             # forward
 
-            helper.network_forward_train(base_model, psnet_model, decoder, regressor_delta, pred_scores,
-                                         video_1, label_1_score, video_2, label_2_score, mse, optimizer,
+            helper.network_forward_train(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, pred_scores,
+                                         video_1, video_gray_1, label_1_score, video_2, video_gray_2, label_2_score, mse, optimizer,
                                          opti_flag, epoch, idx+1, len(train_dataloader),
                                          args, label_1_tas, label_2_tas, bce,
                                          pred_tious_5, pred_tious_75)
             true_scores.extend(data['final_score'].numpy())
+
 
         # evaluation results
         pred_scores = np.array(pred_scores)
@@ -107,11 +118,11 @@ def train_net(args):
 
         print('[Training] EPOCH: %d, tIoU_5: %.4f, tIoU_75: %.4f'
               % (epoch, pred_tious_mean_5, pred_tious_mean_75))
-        print('[Training] EPOCH: %d, correlation: %.4f, L2: %.4f, RL2: %.4f, lr1: %.4f, lr2: %.4f'%(epoch, rho, L2, RL2, 
+        print('[Training] EPOCH: %d, correlation: %.4f, L2: %.4f, RL2: %.4f, lr1: %.4f, lr2: %.4f'%(epoch, rho, L2, RL2,
             optimizer.param_groups[0]['lr'],  optimizer.param_groups[1]['lr']))
 
-        validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader, epoch, optimizer, args)
-        helper.save_checkpoint(base_model, psnet_model, decoder, regressor_delta, optimizer, epoch,
+        validate(base_model, psnet_model,base_wvlet_model, tqfusion_model, decoder, regressor_delta, test_dataloader, epoch, optimizer, args)
+        helper.save_checkpoint(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, optimizer, epoch,
                                epoch_best_aqa, rho_best, L2_min, RL2_min, 'last', args)
         print('[TEST] EPOCH: %d, best correlation: %.6f, best L2: %.6f, best RL2: %.6f' % (epoch_best_aqa,
                                                                                            rho_best, L2_min, RL2_min))
@@ -123,7 +134,7 @@ def train_net(args):
             scheduler.step()
 
 
-def validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader, epoch, optimizer, args):
+def validate(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, test_dataloader, epoch, optimizer, args):
 
     print("Start validating epoch {}".format(epoch))
     global use_gpu
@@ -136,6 +147,8 @@ def validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader,
 
     base_model.eval()  
     psnet_model.eval()
+    base_wvlet_model.eval()
+    tqfusion_model.eval()
     decoder.eval()
     regressor_delta.eval()
 
@@ -148,13 +161,16 @@ def validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader,
             start = time.time()
 
             video_1 = data['video'].float().cuda()
+            video_gray_1 = data['video_gray'].float().cuda()
             video_2_list = [item['video'].float().cuda() for item in target]
+            video_gray_2_list = [item['video_gray'].float().cuda() for item in target]
+            # video_gray_2 = target['video_gray'].float().cuda()
             label_1_tas = data['transits'].float().cuda() + 1
             label_2_tas_list = [item['transits'].float().cuda() + 1 for item in target]
             label_2_score_list = [item['final_score'].float().reshape(-1, 1).cuda() for item in target]
 
-            helper.network_forward_test(base_model, psnet_model, decoder, regressor_delta, pred_scores,
-                                        video_1, video_2_list, label_2_score_list,
+            helper.network_forward_test(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, pred_scores,
+                                        video_1, video_gray_1, video_2_list, video_gray_2_list, label_2_score_list,
                                         args, label_1_tas, label_2_tas_list,
                                         pred_tious_test_5, pred_tious_test_75)
 
@@ -179,7 +195,7 @@ def validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader,
         if pred_tious_test_mean_75 > pred_tious_best_75:
             pred_tious_best_75 = pred_tious_test_mean_75
             epoch_best_tas = epoch
-        print('[TEST] EPOCH: %d, tIoU_5: %.6f, tIoU_75: %.6f' % (epoch, pred_tious_best_5, pred_tious_best_75))
+        print('[TEST] EPOCH: %d, tIoU_5: %.6f, tIoU_75: %.6f' % (epoch, pred_tious_test_mean_5, pred_tious_test_mean_75))
 
         if L2_min > L2:
             L2_min = L2
@@ -190,7 +206,7 @@ def validate(base_model, psnet_model, decoder, regressor_delta, test_dataloader,
             epoch_best_aqa = epoch
             print('-----New best found!-----')
             helper.save_outputs(pred_scores, true_scores, args)
-            helper.save_checkpoint(base_model, psnet_model, decoder, regressor_delta, optimizer, epoch, epoch_best_aqa,
+            helper.save_checkpoint(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, optimizer, epoch, epoch_best_aqa,
                                    rho_best, L2_min, RL2_min, 'last', args)
         print('[TEST] EPOCH: %d, correlation: %.6f, L2: %.6f, RL2: %.6f' % (epoch, rho, L2, RL2))
 

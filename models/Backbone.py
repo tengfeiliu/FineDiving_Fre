@@ -11,7 +11,7 @@ class I3D_backbone(nn.Module):
         
     def load_pretrain(self, I3D_ckpt_path):
         try:
-            self.backbone.load_state_dict(torch.load(I3D_ckpt_path))
+            self.backbone.load_state_dict(torch.load(I3D_ckpt_path, weights_only=False))
             print('loading ckpt done')
         except:
             logging.info('Ckpt path {} do not exists'.format(I3D_ckpt_path))

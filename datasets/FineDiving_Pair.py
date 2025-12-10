@@ -8,14 +8,15 @@ from os.path import join
 from PIL import Image
 
 class FineDiving_Pair_Dataset(torch.utils.data.Dataset):
-    def __init__(self, args, subset, transform):
+    def __init__(self, args, subset, transform, transform_gray):
         random.seed(args.seed)
         self.subset = subset
         self.transforms = transform
-        self.random_choosing = args.random_choosing
-        self.action_number_choosing = args.action_number_choosing
-        self.length = args.frame_length
-        self.voter_number = args.voter_number
+        self.transform_gray = transform_gray
+        self.random_choosing = args.random_choosing # default False
+        self.action_number_choosing = args.action_number_choosing # default True
+        self.length = args.frame_length # video length
+        self.voter_number = args.voter_number # voter number
 
         # file path
         self.data_root = args.data_root
@@ -67,17 +68,19 @@ class FineDiving_Pair_Dataset(torch.utils.data.Dataset):
     def load_video(self, video_file_name):
         image_list = sorted((glob.glob(os.path.join(self.data_root, video_file_name[0], str(video_file_name[1]), '*.jpg'))))
 
-        start_frame = int(image_list[0].split("/")[-1][:-4])
-        end_frame = int(image_list[-1].split("/")[-1][:-4])
-        frame_list = np.linspace(start_frame, end_frame, self.length).astype(np.int32)
+        start_frame = int(image_list[0].replace('\\', '/').split("/")[-1][:-4])
+        end_frame = int(image_list[-1].replace('\\', '/').split("/")[-1][:-4])
+        frame_list = np.linspace(start_frame, end_frame, self.length).astype(np.int_)
         image_frame_idx = [frame_list[i] - start_frame for i in range(self.length)]
 
         video = [Image.open(image_list[image_frame_idx[i]]) for i in range(self.length)]
         frames_labels = [self.data_anno.get(video_file_name)[4][i] for i in image_frame_idx]
         frames_catogeries = list(set(frames_labels))
         frames_catogeries.sort(key=frames_labels.index)
-        transitions = [frames_labels.index(c) for c in frames_catogeries]
-        return self.transforms(video), np.array([transitions[1]-1,transitions[-1]-1]), np.array(frames_labels)
+        transitions = [frames_labels.index(c) for c in frames_catogeries] # 获取所有的动作分割点，
+        video = self.transforms(video)
+        video_gray = self.transform_gray(video.transpose(0,1))
+        return video, video_gray.squeeze(dim=1), np.array([transitions[1]-1,transitions[-1]-1]), np.array(frames_labels) # 获取2哥分割点，这里是根据模型的要求，将每段视频都分割成3段
 
 
     def read_pickle(self, pickle_path):
@@ -88,7 +91,7 @@ class FineDiving_Pair_Dataset(torch.utils.data.Dataset):
     def __getitem__(self, index):
         sample_1  = self.dataset[index]
         data = {}
-        data['video'], data['transits'], data['frame_labels'] = self.load_video(sample_1)
+        data['video'], data['video_gray'], data['transits'], data['frame_labels'] = self.load_video(sample_1)
         data['number'] = self.data_anno.get(sample_1)[0]
         data['final_score'] = self.data_anno.get(sample_1)[1]
         data['difficulty'] = self.data_anno.get(sample_1)[2]
@@ -107,11 +110,11 @@ class FineDiving_Pair_Dataset(torch.utils.data.Dataset):
             # exclude self
             if len(file_list) > 1:
                 file_list.pop(file_list.index(sample_1))
-            # choosing one out
+            # choosing one out. this is the exemple instance.
             idx = random.randint(0, len(file_list) - 1)
             sample_2 = file_list[idx]
             target = {}
-            target['video'], target['transits'], target['frame_labels'] = self.load_video(sample_2)
+            target['video'], target['video_gray'], target['transits'], target['frame_labels'] = self.load_video(sample_2)
             target['number'] = self.data_anno.get(sample_2)[0]
             target['final_score'] = self.data_anno.get(sample_2)[1]
             target['difficulty'] = self.data_anno.get(sample_2)[2]
@@ -135,7 +138,7 @@ class FineDiving_Pair_Dataset(torch.utils.data.Dataset):
             target_list = []
             for item in choosen_sample_list:
                 tmp = {}
-                tmp['video'], tmp['transits'], tmp['frame_labels'] = self.load_video(item)
+                tmp['video'], tmp['video_gray'], tmp['transits'], tmp['frame_labels'] = self.load_video(item)
                 tmp['number'] = self.data_anno.get(item)[0]
                 tmp['final_score'] = self.data_anno.get(item)[1]
                 tmp['difficulty'] = self.data_anno.get(item)[2]

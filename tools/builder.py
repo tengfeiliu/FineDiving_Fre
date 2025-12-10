@@ -10,6 +10,9 @@ from models.PS import PSNet
 from utils.misc import import_class
 from torchvideotransforms import video_transforms, volume_transforms
 from models import decoder_fuser
+from models.wvlet import WVlet
+from models.TRFusion import TRFusionAttension
+from torchvision import transforms
 from models import MLP_score
 
 
@@ -21,35 +24,51 @@ def get_video_trans():
         volume_transforms.ClipToTensor(),
         video_transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
+
+    train_trans_gray = video_transforms.Compose([
+        transforms.Grayscale(num_output_channels=1),
+    ])
+
     test_trans = video_transforms.Compose([
         video_transforms.Resize((200, 112)),
         video_transforms.CenterCrop(112),
         volume_transforms.ClipToTensor(),
         video_transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
     ])
-    return train_trans, test_trans
+    test_trans_gray = video_transforms.Compose([
+        transforms.Grayscale(num_output_channels=1),
+    ])
+
+    return train_trans, test_trans, train_trans_gray, test_trans_gray
+
 
 
 def dataset_builder(args):
-    train_trans, test_trans = get_video_trans()
+    train_trans, test_trans, train_trans_gray, test_trans_gray = get_video_trans()
     Dataset = import_class("datasets." + args.benchmark)
-    train_dataset = Dataset(args, transform=train_trans, subset='train')
-    test_dataset = Dataset(args, transform=test_trans, subset='test')
+    train_dataset = Dataset(args, transform=train_trans, subset='train', transform_gray=train_trans_gray)
+    test_dataset = Dataset(args, transform=test_trans, subset='test', transform_gray=test_trans_gray)
     return train_dataset, test_dataset
 
 def model_builder(args):
     base_model = I3D_backbone(I3D_class=400)
     base_model.load_pretrain(args.pretrained_i3d_weight)
+    base_wvlet_model = WVlet(in_channels=96)
+    tqfusion_model = TRFusionAttension(in_dim=64)
     PSNet_model = PSNet(n_channels=9)
-    Decoder_vit = decoder_fuser(dim=64, num_heads=8, num_layers=3)
-    Regressor_delta = MLP_score(in_channel=64, out_channel=1)
-    return base_model, PSNet_model, Decoder_vit, Regressor_delta
+    # Decoder_vit = decoder_fuser(dim=64, num_heads=8, num_layers=3) # 原始的使用64维的vit
+    Decoder_vit = decoder_fuser(dim=64, num_heads=8, num_layers=3) # 使用96维的vit
+    # Regressor_delta = MLP_score(in_channel=96, out_channel=1) # 原始的使用96维的MLP
+    Regressor_delta = MLP_score(in_channel=64, out_channel=1) #
+    return base_model, PSNet_model, base_wvlet_model, tqfusion_model, Decoder_vit, Regressor_delta
 
-def build_opti_sche(base_model, psnet_model, decoder, regressor_delta, args):
+def build_opti_sche(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, args):
     if args.optimizer == 'Adam':
         optimizer = optim.Adam([
             {'params': base_model.parameters(), 'lr': args.base_lr * args.lr_factor},
             {'params': psnet_model.parameters()},
+            {'params': base_wvlet_model.parameters()},
+            {'params': tqfusion_model.parameters()},
             {'params': decoder.parameters()},
             {'params': regressor_delta.parameters()}
         ], lr=args.base_lr, weight_decay=args.weight_decay)
@@ -60,7 +79,7 @@ def build_opti_sche(base_model, psnet_model, decoder, regressor_delta, args):
     return optimizer, scheduler
 
 
-def resume_train(base_model, psnet_model, decoder, regressor_delta, optimizer, args):
+def resume_train(base_model, psnet_model,base_wvlet_model, tqfusion_model, decoder, regressor_delta, optimizer, args):
     ckpt_path = os.path.join(args.experiment_path, 'last.pth')
     if not os.path.exists(ckpt_path):
         print('no checkpoint file from path %s...' % ckpt_path)
@@ -73,6 +92,12 @@ def resume_train(base_model, psnet_model, decoder, regressor_delta, optimizer, a
     # parameter resume of base model
     base_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_model'].items()}
     base_model.load_state_dict(base_ckpt)
+
+    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet'].items()}
+    base_wvlet_model.load_state_dict(base_wvlet_ckpt)
+
+    tqfusion_ckpt = {k.replace("module.", ""): v for k, v in state_dict['tqfusion_model'].items()}
+    tqfusion_model.load_state_dict(tqfusion_ckpt)
 
     psnet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['psnet_model'].items()}
     psnet_model.load_state_dict(psnet_ckpt)
@@ -96,7 +121,7 @@ def resume_train(base_model, psnet_model, decoder, regressor_delta, optimizer, a
     return start_epoch, epoch_best_aqa, rho_best, L2_min, RL2_min
 
 
-def load_model(base_model, psnet_model, decoder, regressor_delta, args):
+def load_model(base_model, psnet_model, base_wvlet_model, tqfusion_model, decoder, regressor_delta, args):
     ckpt_path = args.ckpts
     if not os.path.exists(ckpt_path):
         raise NotImplementedError('no checkpoint file from path %s...' % ckpt_path)
@@ -110,6 +135,10 @@ def load_model(base_model, psnet_model, decoder, regressor_delta, args):
     base_model.load_state_dict(base_ckpt)
     psnet_model_ckpt = {k.replace("module.", ""): v for k, v in state_dict['psnet_model'].items()}
     psnet_model.load_state_dict(psnet_model_ckpt)
+    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet'].items()}
+    base_wvlet_model.load_state_dict(base_wvlet_ckpt)
+    tqfusion_ckpt = {k.replace("module.", ""): v for k, v in state_dict['tqfusion_model'].items()}
+    tqfusion_model.load_state_dict(tqfusion_ckpt)
     decoder_ckpt = {k.replace("module.", ""): v for k, v in state_dict['decoder'].items()}
     decoder.load_state_dict(decoder_ckpt)
     regressor_delta_ckpt = {k.replace("module.", ""): v for k, v in state_dict['regressor_delta'].items()}
