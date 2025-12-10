@@ -10,12 +10,13 @@ class WVlet(nn.Module):
     def __init__(self, in_channels=96, out_channel=96):
         super(WVlet, self).__init__()
         self.resnet_gated = FrequencyResnetGated(in_channels, out_channel)
+        self.resnet_gated_l2 = FrequencyResnetGated(in_channels, out_channel)
         self.level = 2
         self.wvlet2_conv1 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel, kernel_size=3, stride=2, padding=0)
 
         self.wvlet3_conv1 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel, kernel_size=3, stride=2, padding=1)
         self.wvlet3_conv2 = nn.Conv2d(in_channels=out_channel, out_channels=out_channel, kernel_size=3, stride=2, padding=1)
-
+        self.gate = nn.Conv2d(in_channels=out_channel*2, out_channels=out_channel * 2, kernel_size=3, stride=1, padding=1)
         self.wvletFusion = nn.Conv2d(in_channels=out_channel * 2, out_channels=240, kernel_size=1, stride=1, padding=0)
 
 
@@ -41,10 +42,12 @@ class WVlet(nn.Module):
         coeffs_x2_batch = coeffs_x2_batch.permute(0, 3, 1, 2)
 
         coeffs_x1_out = self.resnet_gated(coeffs_x1_batch)
-        coeffs_x2_temp = self.resnet_gated(coeffs_x2_batch)
+        coeffs_x2_temp = self.resnet_gated_l2(coeffs_x2_batch)
         coeffs_x2_out = self.wvlet2_conv1(coeffs_x2_temp)
 
         coeffs_x = torch.cat([coeffs_x1_out, coeffs_x2_out], axis=1)
+        gate = torch.sigmoid(self.gate(coeffs_x))
+        coeffs_x = coeffs_x * gate
         out = self.wvletFusion(coeffs_x)
         out_size = nn.functional.interpolate(out, size=(8, 8), mode='bilinear', align_corners=True)
         out_size = out_size.view(out_size.size(0), out_size.size(1), out_size.size(2) * out_size.size(3))

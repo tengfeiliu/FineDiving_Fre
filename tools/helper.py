@@ -193,8 +193,8 @@ def network_forward_train(base_model, psnet_model, base_wvlet_model, tqfusion_mo
     loss_aqa = mse(delta[:delta.shape[0]//2], (label_1_score - label_2_score)) \
                + mse(delta[delta.shape[0]//2:], (label_2_score - label_1_score))
 
-    loss = loss_aqa + loss_tas
-    # loss = loss_aqa
+    # loss = loss_aqa + loss_tas
+    loss = loss_aqa
     loss.backward()
     optimizer.step()
 
