@@ -93,7 +93,7 @@ def resume_train(base_model, psnet_model,base_wvlet_model, tqfusion_model, decod
     base_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_model'].items()}
     base_model.load_state_dict(base_ckpt)
 
-    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet'].items()}
+    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet_model'].items()}
     base_wvlet_model.load_state_dict(base_wvlet_ckpt)
 
     tqfusion_ckpt = {k.replace("module.", ""): v for k, v in state_dict['tqfusion_model'].items()}
@@ -135,7 +135,7 @@ def load_model(base_model, psnet_model, base_wvlet_model, tqfusion_model, decode
     base_model.load_state_dict(base_ckpt)
     psnet_model_ckpt = {k.replace("module.", ""): v for k, v in state_dict['psnet_model'].items()}
     psnet_model.load_state_dict(psnet_model_ckpt)
-    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet'].items()}
+    base_wvlet_ckpt = {k.replace("module.", ""): v for k, v in state_dict['base_wvlet_model'].items()}
     base_wvlet_model.load_state_dict(base_wvlet_ckpt)
     tqfusion_ckpt = {k.replace("module.", ""): v for k, v in state_dict['tqfusion_model'].items()}
     tqfusion_model.load_state_dict(tqfusion_ckpt)

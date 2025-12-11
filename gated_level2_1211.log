@@ -1,0 +1,22 @@
+nohup: ignoring input
+/opt/anaconda3/envs/torch241gpu/lib/python3.10/site-packages/timm/models/layers/__init__.py:48: FutureWarning: Importing from timm.models.layers is deprecated, please import via timm.layers
+  warnings.warn(f"Importing from {__name__} is deprecated, please import via timm.layers", FutureWarning)
+/data/ltf/code/FineDiving/tools/builder.py:90: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature.
+  state_dict = torch.load(ckpt_path, map_location='cpu')
+Error importing huggingface_hub.hf_api: No module named 'filelock'
+Resume yaml from ./experiments/TSA/FineDiving/default/config.yaml
+Namespace(archs='TSA', benchmark='FineDiving', prefix='default', resume=True, sync_bn=False, fix_bn=True, test=False, ckpts=None, config='FineDiving_TSA.yaml', experiment_path='./experiments/TSA/FineDiving/default', action_number_choosing=True, base_lr=0.001, bs_test=1, bs_train=8, data_root='/data/ltf/datasets/finediving_ds/Trimmed_Video_Frames/FineDiving_Trimmed_VideoFrames/FINADiving_MTL_256s', fix_size=5, frame_length=96, label_path='/data/ltf/datasets/finediving_ds/Annotations/fine-grained_annotation_aqa.pkl', lr_factor=0.1, max_epoch=200, optimizer='Adam', pretrained_i3d_weight='models/model_rgb.pth', print_freq=40, prob_tas_threshold=0.25, random_choosing=False, seed=0, step_num=3, test_split='/data/ltf/datasets/finediving_ds/train_test_split/test_split.pkl', train_split='/data/ltf/datasets/finediving_ds/train_test_split/train_split.pkl', voter_number=10, weight_decay=0, workers=2)
+Trainer start ... 
+Using I3D backbone
+Loading weights from ./experiments/TSA/FineDiving/default/last.pth...
+resume ckpts @ 3 epoch(rho = 0.7180, L2 = 114.7652 , RL2 = 0.0105)
+[Training][4/200][40/282] 	 Batch_time: 1.16 	 Batch_loss: 525.2968 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][80/282] 	 Batch_time: 1.24 	 Batch_loss: 704.2605 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][120/282] 	 Batch_time: 1.19 	 Batch_loss: 167.9532 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][160/282] 	 Batch_time: 1.20 	 Batch_loss: 336.3568 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][200/282] 	 Batch_time: 1.19 	 Batch_loss: 146.9205 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][240/282] 	 Batch_time: 1.18 	 Batch_loss: 146.9515 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training][4/200][280/282] 	 Batch_time: 1.14 	 Batch_loss: 475.9452 	 lr1 : 0.00010 	 lr2 : 0.00100
+[Training] EPOCH: 4, tIoU_5: 0.3927, tIoU_75: 0.0804
+[Training] EPOCH: 4, correlation: 0.5942, L2: 195.8499, RL2: 0.0149, lr1: 0.0001, lr2: 0.0010
+Start validating epoch 4

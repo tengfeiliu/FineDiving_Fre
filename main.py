@@ -3,7 +3,7 @@ import sys
 import torch
 from tools import train_net, test_net
 from utils import parser
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
+os.environ["CUDA_VISIBLE_DEVICES"] = '1'
 
 def main():
 
