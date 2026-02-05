@@ -134,16 +134,5 @@ class FrequencyResnetGated(nn.Module):
         # x = self.R6(x)
         gate = torch.sigmoid(self.gate(x))
         x = x * gate
-        # f4_1 = x
-        # f4_1 = self.en3(f4_1)
-        # x = self.model7(x)
-        # x = x + f4_1
-        # x = self.R7(x)
-        # f4_2 = x
-        # x = self.model8(x)
-        # x = x + f4_2
-        # x = self.R8(x)
-        # x = self.aap(x)
-        # x = self.flatten(x)
-        # x = self.fc(x)
+
         return x
